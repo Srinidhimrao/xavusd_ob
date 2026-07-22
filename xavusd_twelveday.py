@@ -8,26 +8,27 @@ import pytz
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="XAU/USD Live SMC Scanner", layout="wide")
 
-def get_ist_time(utc_str=None):
+# --- IMPROVED TIME CONVERSION ---
+def get_ist_time(api_time_str=None):
     """
-    Forces the API timestamp to be treated as UTC, 
-    then converts it to Indian Standard Time (IST).
+    Ensures the API time is treated as UTC and converted correctly to IST.
     """
-    ist = pytz.timezone('Asia/Kolkata')
-    if utc_str:
-        # 1. Parse the string from Twelve Data
-        dt = datetime.strptime(utc_str, '%Y-%m-%d %H:%M:%S')
-        # 2. Tell Python this is UTC
+    ist_tz = pytz.timezone('Asia/Kolkata')
+    if api_time_str:
+        # 1. Parse API string
+        dt = datetime.strptime(api_time_str, '%Y-%m-%d %H:%M:%S')
+        # 2. Assign UTC timezone to the raw time
         utc_dt = pytz.utc.localize(dt)
-        # 3. Convert that UTC time to IST
-        ist_dt = utc_dt.astimezone(ist)
+        # 3. Convert to Indian Time
+        ist_dt = utc_dt.astimezone(ist_tz)
         return ist_dt.strftime('%Y-%m-%d %H:%M')
     
-    # Return current time in IST if no string provided
-    return datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S')
+    # Return current time in IST
+    return datetime.now(ist_tz).strftime('%Y-%m-%d %H:%M:%S')
 
 def fetch_data(symbol, interval, api_key):
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={interval}&outputsize=100&apikey={api_key}"
+    # CRITICAL FIX: Added &timezone=UTC to the URL
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={interval}&outputsize=100&timezone=UTC&apikey={api_key}"
     try:
         r = requests.get(url).json()
         if 'values' not in r:
@@ -49,7 +50,6 @@ def get_market_state(price, ema50, ema200):
     return "Sideways"
 
 def analyze_data(df):
-    # Indicators
     df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
     df['ema200'] = df['close'].ewm(span=200, adjust=False).mean()
     
@@ -71,7 +71,6 @@ def analyze_data(df):
         "low": df['low'].min()
     }
     
-    # OB Detection
     obs = []
     for i in range(2, len(df)):
         curr, p = df.iloc[i], df.iloc[i-1]
@@ -85,7 +84,7 @@ def analyze_data(df):
             
         if ob_type:
             obs.append({
-                "IST_Time": get_ist_time(curr['datetime']),
+                "IST_Time": get_ist_time(curr['datetime']), # Uses fixed conversion
                 "Market_State": get_market_state(curr['close'], df['ema50'].iloc[i], df['ema200'].iloc[i]),
                 "OB_Type": ob_type,
                 "Zone_Low": round(p['low'], 2),
@@ -100,16 +99,14 @@ st.title("⚖️ XAU/USD Live SMC Dashboard")
 
 # Sidebar
 st.sidebar.header("Settings")
-api_key = st.sidebar.text_input("Twelve Data API Key", value="f208bbc7e84a428ea03adf59947ff894", type="password")
-symbol = st.sidebar.selectbox("Symbol", ["XAU/USD", "EUR/USD", "BTC/USD"])
+api_key = st.sidebar.text_input("API Key", value="f208bbc7e84a428ea03adf59947ff894", type="password")
+symbol = st.sidebar.text_input("Symbol", value="XAU/USD")
 interval = st.sidebar.selectbox("Interval", ["1min", "5min", "15min", "1h"], index=2)
-refresh_rate = st.sidebar.slider("Refresh Rate (seconds)", 30, 300, 60)
+refresh_rate = st.sidebar.slider("Refresh Rate (sec)", 30, 300, 60)
 
-# Session State for History
 if 'ob_history' not in st.session_state:
     st.session_state.ob_history = []
 
-# Main Logic
 df = fetch_data(symbol, interval, api_key)
 
 if df is not None:
@@ -120,7 +117,7 @@ if df is not None:
         if not any(h['raw_time'] == ob['raw_time'] for h in st.session_state.ob_history):
             st.session_state.ob_history.append(ob)
 
-    # 1. Top Metrics
+    # 1. Dashboard Metrics
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Live Price", f"${mkt['price']:.2f}", f"{mkt['change']:+.2f}")
     col2.metric("Market State", mkt['state'])
@@ -133,17 +130,12 @@ if df is not None:
     st.subheader("✅ Order Block (SMC) Signal History")
     if st.session_state.ob_history:
         history_df = pd.DataFrame(st.session_state.ob_history).tail(20)
-        # Reorder columns
         history_df = history_df[["IST_Time", "Market_State", "OB_Type", "Zone_Low", "Zone_High", "Impulse"]]
         st.dataframe(history_df, use_container_width=True)
-    else:
-        st.info("No Order Blocks detected in the current data range.")
 
-    # 3. Simple Chart
-    st.subheader(f"{symbol} Price Action")
+    # 3. Chart
     st.line_chart(df.set_index('datetime')['close'])
 
-    # Auto Refresh
-    st.caption(f"Last updated: {get_ist_time()}. Auto-refreshing in {refresh_rate}s...")
+    st.caption(f"Last updated (IST): {get_ist_time()}. Page will refresh automatically.")
     time.sleep(refresh_rate)
     st.rerun()
