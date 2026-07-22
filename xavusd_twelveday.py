@@ -8,12 +8,22 @@ import pytz
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="XAU/USD Live SMC Scanner", layout="wide")
 
-# --- FUNCTIONS ---
 def get_ist_time(utc_str=None):
+    """
+    Forces the API timestamp to be treated as UTC, 
+    then converts it to Indian Standard Time (IST).
+    """
     ist = pytz.timezone('Asia/Kolkata')
     if utc_str:
+        # 1. Parse the string from Twelve Data
         dt = datetime.strptime(utc_str, '%Y-%m-%d %H:%M:%S')
-        return pytz.utc.localize(dt).astimezone(ist).strftime('%Y-%m-%d %H:%M')
+        # 2. Tell Python this is UTC
+        utc_dt = pytz.utc.localize(dt)
+        # 3. Convert that UTC time to IST
+        ist_dt = utc_dt.astimezone(ist)
+        return ist_dt.strftime('%Y-%m-%d %H:%M')
+    
+    # Return current time in IST if no string provided
     return datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S')
 
 def fetch_data(symbol, interval, api_key):
